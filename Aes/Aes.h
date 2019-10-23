@@ -10,8 +10,8 @@ class Aes
 {
 public:
   Aes(Word w1, Word w2, Word w3, Word w4);
-  void encrypt(Block * data, unsigned int dataSize);
-  void decrypt(Block * data, unsigned int dataSize);
+  void encrypt(char * data, unsigned int dataSize);
+  void decrypt(char * data, unsigned int dataSize);
   ~Aes();
 
   Block key;

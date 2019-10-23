@@ -6,6 +6,68 @@ static unsigned char invSbox[] = { 82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 16
 static unsigned mixColMatrix[4][4] = { {2,3,1,1}, {1,2,3,1}, {1,1,2,3}, {3,1,1,2} };
 static unsigned invMixColMatrix[4][4] = { {14, 11, 13, 9}, {9,14,11,13}, {13,9,14,11}, {11,13,9,14} };
 
+
+static unsigned char gMuliplyBy2(unsigned char c)
+{
+  unsigned char h, b;
+  h = (unsigned char)((signed char)c >> 7); /* arithmetic right shift, thus shifting in either zeros or ones */
+  b = c << 1; /* implicitly removes high bit because b[c] is an 8-bit char, so we xor by 0x1b and not 0x11b in the next line */
+  b ^= 0x1B & h;
+  return b;
+}
+
+static unsigned char gMultipty9(unsigned char c)
+{
+  return (gMuliplyBy2(gMuliplyBy2(gMuliplyBy2(c))) ^ c);
+}
+
+static unsigned char gMultipty11(unsigned char c)
+{
+  return (gMuliplyBy2(gMuliplyBy2(gMuliplyBy2(c)) ^ c) ^ c);
+}
+
+static unsigned char gMultipty13(unsigned char c)
+{
+  return (gMuliplyBy2(gMuliplyBy2(gMuliplyBy2(c) ^ c)) ^ c);
+}
+
+static unsigned char gMultipty14(unsigned char c)
+{
+  return  gMuliplyBy2(gMuliplyBy2((gMuliplyBy2(c) ^ c)) ^ c);
+}
+
+static void ginv_column(unsigned char &r0, unsigned char &r1, unsigned char &r2, unsigned char &r3)
+{
+  unsigned char a[4];
+  a[0] = r0;
+  a[1] = r1;
+  a[2] = r2;
+  a[3] = r3;
+
+  r0 = gMultipty14(a[0]) ^ gMultipty11(a[1]) ^ gMultipty13(a[2]) ^ gMultipty9(a[3]);
+  r1 = gMultipty9(a[0]) ^ gMultipty14(a[1]) ^ gMultipty11(a[2]) ^ gMultipty13(a[3]);
+  r2 = gMultipty13(a[0]) ^ gMultipty9(a[1]) ^ gMultipty14(a[2]) ^ gMultipty11(a[3]);
+  r3 = gMultipty11(a[0]) ^ gMultipty13(a[1]) ^ gMultipty9(a[2]) ^ gMultipty14(a[3]);
+}
+
+static void gmix_column(unsigned char &r0, unsigned char &r1, unsigned char &r2, unsigned char &r3) {
+  unsigned char a[4];
+  /* The array 'a' is simply a copy of the input array 'r'
+   * The array 'b' is each element of the array 'a' multiplied by 2
+   * in Rijndael's Galois field
+   * a[n] ^ b[n] is element n multiplied by 3 in Rijndael's Galois field */
+
+  a[0] = r0;
+  a[1] = r1;
+  a[2] = r2;
+  a[3] = r3;
+
+  r0 = gMuliplyBy2(a[0]) ^ a[3] ^ a[2] ^ gMuliplyBy2(a[1]) ^ a[1]; /* 2 * a0 + a3 + a2 + 3 * a1 */
+  r1 = gMuliplyBy2(a[1]) ^ a[0] ^ a[3] ^ gMuliplyBy2(a[2]) ^ a[2]; /* 2 * a1 + a0 + a3 + 3 * a2 */
+  r2 = gMuliplyBy2(a[2]) ^ a[1] ^ a[0] ^ gMuliplyBy2(a[3]) ^ a[3]; /* 2 * a2 + a1 + a0 + 3 * a3 */
+  r3 = gMuliplyBy2(a[3]) ^ a[2] ^ a[1] ^ gMuliplyBy2(a[0]) ^ a[0]; /* 2 * a3 + a2 + a1 + 3 * a0 */
+}
+
 void Aes::firstRoundKey()
 {
   round = 0;
@@ -119,14 +181,11 @@ Block Aes::mixColumns(Block data)
     unsigned char s[4];
     for (int g = 0; g < 4; g++)
       s[g] = (data.w[g] >> ((3 - i) * 8)) & 255;
-    unsigned char ns[4] = { 0,0,0,0 };
+
+    gmix_column(s[0], s[1], s[2], s[3]);
 
     for (int g = 0; g < 4; g++)
-      for (int j = 0; j < 4; j++)
-        ns[g] = (ns[g] + s[j] * mixColMatrix[g][j]) & 255;
-
-    for (int g = 0; g < 4; g++)
-      result.w[g] += ns[g] << ((3 - i) * 8);
+      result.w[g] += s[g] << ((3 - i) * 8);
   }
   return result;
 }
@@ -182,14 +241,11 @@ Block Aes::invMixColumns(Block data)
     unsigned char s[4];
     for (int g = 0; g < 4; g++)
       s[g] = (data.w[g] >> ((3 - i) * 8)) & 255;
-    unsigned char ns[4] = { 0,0,0,0 };
+
+    ginv_column(s[0], s[1], s[2], s[3]);
 
     for (int g = 0; g < 4; g++)
-      for (int j = 0; j < 4; j++)
-        ns[g] = (ns[g] + s[j] * invMixColMatrix[g][j]) & 255;
-
-    for (int g = 0; g < 4; g++)
-      result.w[g] += ns[g] << ((3 - i) * 8);
+      result.w[g] += s[g] << ((3 - i) * 8);
   }
   return result;
 }
@@ -207,66 +263,99 @@ Aes::Aes(Word w1, Word w2, Word w3, Word w4)
 static Word charToWord(char c1, char c2, char c3, char c4)
 {
   Word result = 0;
-  result += c1 << 24;
-  result += c2 << 16;
-  result += c3 << 8;
-  result += c4;
+  result += (unsigned char)c1 << 24;
+  result += (unsigned char)c2 << 16;
+  result += (unsigned char)c3 << 8;
+  result += (unsigned char)c4;
   return result;
 }
 
-void Aes::encrypt(Block * data, unsigned int dataSize)
+static void wordToChar(Word w, char * c)
 {
-  firstRoundKey();
-  Block block = *data;
-  /*block.w[0] = charToWord(data[0], data[1], data[2], data[3]);
-  block.w[1] = charToWord(data[4], data[5], data[6], data[7]);
-  block.w[2] = charToWord(data[8], data[9], data[10], data[11]);
-  block.w[3] = charToWord(data[12], data[13], data[14], data[15]);*/
-
-  block = addRoundKey(block);
-  nextRoundKey();
-
-  for (int i = 0; i < 10; i++)
-  {
-    block = subBytes(block);
-    block = shiftRows(block);
-    block = mixColumns(block);
-    block = addRoundKey(block);
-    nextRoundKey();
-  }
-
-  data->w[0] = block.w[0];
-  data->w[1] = block.w[1];
-  data->w[2] = block.w[2];
-  data->w[3] = block.w[3];
+  c[0] = (char)(w >> 24);
+  c[1] = (char)((w >> 16) & 255);
+  c[2] = (char)((w >> 8) & 255);
+  c[3] = (char)((w) & 255);
 }
 
-void Aes::decrypt(Block * data, unsigned int dataSize)
+void Aes::encrypt(char * data, unsigned int dataSize)
 {
-  lastRoundKey();
-  Block block = *data;
-  /*block.w[0] = charToWord(data[0], data[1], data[2], data[3]);
-  block.w[1] = charToWord(data[4], data[5], data[6], data[7]);
-  block.w[2] = charToWord(data[8], data[9], data[10], data[11]);
-  block.w[3] = charToWord(data[12], data[13], data[14], data[15]);*/
+  Block prevValue = key;
 
-  block = addRoundKey(block);
-  previousRoundKey();
-
-  for (int i = 0; i < 10; i++)
+  for (int i = 0; i < dataSize; i += 16)
   {
-    block = invShiftRows(block);
-    block = invSubBytes(block);
-    block = addRoundKey(block);
-    if(i < 9)
-      block = invMixColumns(block);
-    previousRoundKey();
-  }
+    firstRoundKey();
+    Block block;
+    block.w[0] = charToWord(data[i], data[i + 1], data[i + 2], data[i + 3]);
+    block.w[1] = charToWord(data[i + 4], data[i + 5], data[i + 6], data[i + 7]);
+    block.w[2] = charToWord(data[i + 8], data[i + 9], data[i + 10], data[i + 11]);
+    block.w[3] = charToWord(data[i + 12], data[i + 13], data[i + 14], data[i + 15]);
 
-  data->w[0] = block.w[0];
-  data->w[1] = block.w[1];
-  data->w[2] = block.w[2];
-  data->w[3] = block.w[3];
+    block.w[0] = block.w[0] ^ prevValue.w[0];
+    block.w[1] = block.w[1] ^ prevValue.w[1];
+    block.w[2] = block.w[2] ^ prevValue.w[2];
+    block.w[3] = block.w[3] ^ prevValue.w[3];
+
+    block = addRoundKey(block);
+    nextRoundKey();
+
+    for (int i = 0; i < 10; i++)
+    {
+      block = subBytes(block);
+      block = shiftRows(block);
+      block = mixColumns(block);
+      block = addRoundKey(block);
+      nextRoundKey();
+    }
+
+    prevValue = block;
+
+    wordToChar(block.w[0], data + i);
+    wordToChar(block.w[1], data + i + 4);
+    wordToChar(block.w[2], data + i + 8);
+    wordToChar(block.w[3], data + i + 12);
+  }
+}
+
+void Aes::decrypt(char * data, unsigned int dataSize)
+{
+  Block prevValue = key;
+  Block iv = key;
+
+  for (int i = 0; i < dataSize; i += 16)
+  {
+    lastRoundKey();
+    Block block;
+    block.w[0] = charToWord(data[i], data[i + 1], data[i + 2], data[i + 3]);
+    block.w[1] = charToWord(data[i + 4], data[i + 5], data[i + 6], data[i + 7]);
+    block.w[2] = charToWord(data[i + 8], data[i + 9], data[i + 10], data[i + 11]);
+    block.w[3] = charToWord(data[i + 12], data[i + 13], data[i + 14], data[i + 15]);
+
+    iv = block;
+
+    for (int i = 0; i < 10; i++)
+    {
+      block = addRoundKey(block);
+      block = invMixColumns(block);
+      block = invShiftRows(block);
+      block = invSubBytes(block);
+      previousRoundKey();
+    }
+
+    block = addRoundKey(block);
+
+    block.w[0] = block.w[0] ^ prevValue.w[0];
+    block.w[1] = block.w[1] ^ prevValue.w[1];
+    block.w[2] = block.w[2] ^ prevValue.w[2];
+    block.w[3] = block.w[3] ^ prevValue.w[3];
+
+    prevValue = iv;
+
+    wordToChar(block.w[0], data + i);
+    wordToChar(block.w[1], data + i + 4);
+    wordToChar(block.w[2], data + i + 8);
+    wordToChar(block.w[3], data + i + 12);
+  }
 }
 
 Aes::~Aes()
